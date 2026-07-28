@@ -29,6 +29,10 @@ COMPETITIONS = {
     "primeira": "PPL",
 }
 
+# ---------- Startup sanity check ----------
+logger.info(f"BOT_TOKEN loaded: {'YES' if BOT_TOKEN != 'PUT_YOUR_TOKEN_HERE' else 'NO - MISSING'}")
+logger.info(f"FOOTBALL_DATA_API_KEY loaded: {'YES' if FD_API_KEY != 'PUT_YOUR_KEY_HERE' else 'NO - MISSING'}")
+
 # ---------- Subscriber storage ----------
 
 def load_subscribers():
@@ -54,8 +58,11 @@ def get_today_fixtures_text():
             params={"dateFrom": today, "dateTo": today},
             timeout=10
         )
+        logger.info(f"fixtures status={resp.status_code} body={resp.text[:300]}")
         if resp.status_code == 429:
             return "⚠️ Rate limit hit, try again in a minute."
+        if resp.status_code != 200:
+            return f"⚠️ API returned status {resp.status_code}. The API key may be missing or invalid on the server."
         data = resp.json()
         matches = data.get("matches", [])
         if not matches:
@@ -70,7 +77,7 @@ def get_today_fixtures_text():
         return "\n\n".join(lines)
     except Exception as e:
         logger.error(f"fixtures fetch error: {e}")
-        return None
+        return "⚠️ Couldn't fetch fixtures right now, try again later."
 
 # ---------- Command handlers ----------
 
@@ -97,10 +104,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def today(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("🔎 Fetching today's fixtures...")
     text = get_today_fixtures_text()
-    if text is None:
-        await update.message.reply_text("⚠️ Couldn't fetch fixtures right now, try again later.")
-    else:
-        await update.message.reply_text(text, parse_mode="Markdown")
+    await update.message.reply_text(text, parse_mode="Markdown")
 
 async def live(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("🔴 Checking live scores...")
@@ -111,8 +115,14 @@ async def live(update: Update, context: ContextTypes.DEFAULT_TYPE):
             params={"status": "LIVE"},
             timeout=10
         )
+        logger.info(f"live status={resp.status_code} body={resp.text[:300]}")
         if resp.status_code == 429:
             await update.message.reply_text("⚠️ Rate limit hit, try again in a minute.")
+            return
+        if resp.status_code != 200:
+            await update.message.reply_text(
+                f"⚠️ API returned status {resp.status_code}. The API key may be missing or invalid on the server."
+            )
             return
         data = resp.json()
         matches = data.get("matches", [])
@@ -151,11 +161,17 @@ async def standings(update: Update, context: ContextTypes.DEFAULT_TYPE):
             headers=HEADERS,
             timeout=10
         )
+        logger.info(f"standings status={resp.status_code} body={resp.text[:300]}")
         if resp.status_code == 429:
             await update.message.reply_text("⚠️ Rate limit hit, try again in a minute.")
             return
         if resp.status_code == 403:
             await update.message.reply_text("This league isn't available on the free API tier.")
+            return
+        if resp.status_code != 200:
+            await update.message.reply_text(
+                f"⚠️ API returned status {resp.status_code}. The API key may be missing or invalid on the server."
+            )
             return
         data = resp.json()
         table = data["standings"][0]["table"]
@@ -192,8 +208,6 @@ async def send_daily_fixtures(context: ContextTypes.DEFAULT_TYPE):
     if not subscribers:
         return
     text = get_today_fixtures_text()
-    if text is None:
-        return
     for chat_id in list(subscribers):
         try:
             await context.bot.send_message(chat_id=chat_id, text=text, parse_mode="Markdown")
